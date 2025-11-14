@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: solana-ledger-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: solana-test-validator
+  labels:
+    app: solana-test-validator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: solana-test-validator
+  template:
+    metadata:
+      labels:
+        app: solana-test-validator
+    spec:
+      containers:
+      - name: solana-test-validator
+        image: your-registry/solana-test-validator:latest
+        ports:
+        - containerPort: 8899
+          name: rpc
+          protocol: TCP
+        - containerPort: 8900
+          name: websocket
+          protocol: TCP
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+        volumeMounts:
+        - name: ledger-data
+          mountPath: /solana/ledger
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8899
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8899
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+      volumes:
+      - name: ledger-data
+        persistentVolumeClaim:
+          claimName: solana-ledger-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: solana-test-validator
+spec:
+  selector:
+    app: solana-test-validator
+  ports:
+  - name: rpc
+    port: 8899
+    targetPort: 8899
+    protocol: TCP
+  - name: websocket
+    port: 8900
+    targetPort: 8900
+    protocol: TCP
+  type: ClusterIP
