@@ -1,0 +1,68 @@
+name: Determine ref_name
+description: Determine the ref_name on which the workflow is triggered
+
+outputs:
+  ref_name:
+    description: The short ref name of the branch or tag that triggered the workflow run. For example feature-branch-1
+    value: ${{ steps.get-ref-name.outputs.ref_name }}
+  ref_type:
+    description: branch or tag
+    value: ${{ steps.get-ref-name.outputs.ref_type }}
+
+# Why do we need this complex action? Why not just simply use github.ref_name?
+# github.ref_name is said in the document that always containing the tag name when a release is published.
+# Sadly it's not always the case, most of the time it correctly contains the tag name, however, sometimes it is blank.
+#   see this ticket: https://github.com/actions/runner/issues/2788
+
+runs:
+  using: composite
+  steps:
+    - name: Determine trigger ref_name
+      id: get-ref-name
+      shell: bash
+      run: |
+        echo "Determining ref name..."
+
+        # passed from a caller workflow
+        if [[ "${RELEASE_TAG}" != "" ]]; then
+          echo "Found ref_name from env var RELEASE_TAG: $RELEASE_TAG"
+          echo "ref_name=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "ref_type=tag" >> $GITHUB_OUTPUT
+
+        # Acorrding to github documentation, this, in theory, must be always available, regardless trigger type.
+        # But not always the case!
+        elif [[ "${{ github.ref_name }}" != "" ]]; then
+          echo "Found github.ref_name: ${{ github.ref_name }}"
+          echo "ref_name=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          echo "ref_type=${{ github.ref_type }}" >> $GITHUB_OUTPUT
+
+        # when publishing a release
+        elif [[ "${{ github.event.release.tag_name }}" != "" ]]; then
+          echo "Found github.event.release.tag_name: ${{ github.event.release.tag_name }}"
+          echo "ref_name=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          echo "ref_type=tag" >> $GITHUB_OUTPUT
+
+        # pull_request event. head_ref is the name of the source branch
+        elif [[ "${{ github.head_ref }}" != "" ]]; then
+          echo "Found github.head_ref: ${{ github.head_ref }}"
+          echo "ref_name=${{ github.head_ref }}" >> $GITHUB_OUTPUT
+          echo "ref_type=${{ github.ref_type }}" >> $GITHUB_OUTPUT
+
+        # Like github.ref_name, not always available as promised!
+        elif [[ "${GITHUB_REF}" != "" ]]; then
+          ref="${GITHUB_REF}"
+          if [[ "$ref" == refs/heads/* ]]; then
+            ref_name="${ref#refs/heads/}"
+          elif [[ "$ref" == refs/tags/* ]]; then
+            ref_name="${ref#refs/tags/}"
+          else
+            ref_name="$ref"
+          fi
+          echo "Found ref_name from GITHUB_REF: $ref_name"
+          echo "ref_name=$ref_name" >> $GITHUB_OUTPUT
+          echo "ref_type=${{ github.ref_type }}" >> $GITHUB_OUTPUT
+
+        else
+          echo "::error ::Unable to determine the ref_name on which the workflow was triggered"
+          exit 1
+        fi
