@@ -99,11 +99,23 @@ jobs:
       image-name-to-uri: ${{ steps.build.outputs.image-name-to-uri }}
       primary-image-tag: ${{ env.PRIMARY_IMAGE_TAG }}
     steps:
+      - name: Get Go version
+        id: golangver
+        shell: bash
+        run: |
+            set -x
+            exec >> $GITHUB_OUTPUT
+            echo -n HAS_GO_MOD=
+            [ -f go.mod ] && echo true || echo false
+            echo -n GOLANG_VER=
+            [ -f go.mod ] || exit 0
+            grep --max-count=1 '^go\>' go.mod | grep -o '[0-9]\+\.[0-9]\+'
+
       # Use the Github App to generate a temporary access token that can be used to pull
       # the private Go module repositories
       - name: Generate Go Module Token
         # Only run while building the image - for the `dev' environment.
-        if: ${{ inputs.environment == 'dev' || inputs.environment == '' }}
+        if: ${{ (inputs.environment == 'dev' || inputs.environment == '') && steps.golangver.outputs.HAS_GO_MOD == 'true' }}
         id: private-modules-token
         uses: actions/create-github-app-token@v2
         with:
