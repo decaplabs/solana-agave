@@ -1,0 +1,212 @@
+name: Build single dotnet module and deploy it
+description: This action builds a dotnet module in a simple way
+
+inputs:
+  # ======================================================
+  # Arguments for build
+  # ======================================================
+  aws-account-id:
+    type: string
+    required: false
+    default: 653832775139
+    description: used for the role-to-assume, for account connection. Auto-login, by web-based assume-role-with-web-identity policy from Github.
+
+  image-name:
+    description: The name of the image built for this module, only the name, not including the registry address.
+    required: true
+  target-env:
+    description: |
+      The deployment environment, such as dev qa uat load stg prod. Can be either a single name or a comma-separated list of names.
+      Note: stg and prod must not be mixed with other environments. stg and prod must not be deployed at the same time.
+    required: true
+
+  # Arguments for Azure
+  #   Variables for Azure are all defined at the organization in github and this action can use them via the "vars" input
+  #   These variables are: AZURE_ACR_CLIENT_ID AZURE_SUBSCRIPTION_ID AZURE_TENANT_ID
+  #
+  #   This secret is also defined at the organization level. However, github doesn't allow action to read secrets directly
+  #   It needs to be pass here as an action input or via an environment variable, either action environment or workflow environment.
+  azure-acr-secret:
+    description: |
+      The value comes from secrets.AZURE_ACR_SECRET. If this input is not provided, the action will look for environment
+      variable AZURE_ACR_SECRET
+    required: false
+
+  # ======================================================
+  # Options when using Dockerfile to build
+  # ======================================================
+  dockerfile:
+    description: the path to the Dockerfile. Not used if the input argument bake-files is specified
+    required: false
+    default: Dockerfile
+  build-secrets:
+    description: docker build secrets
+    required: false
+    default: ""
+  build-args:
+    description: arguments to pass to docker build
+    required: false
+    default: ""
+  build-context:
+    description: docker build context
+    required: false
+    default: "."
+  build-contexts-additional:
+    description: List of additional build contexts to pass to the docker/build-and-push
+    required: false
+
+  # ======================================================
+  # Arguments for deployment
+  # ======================================================
+  deploy:
+    description: yes/no. Build only or deploy after build. Default yes
+    required: false
+    default: no
+  push:
+    description: Whether to push the image to Azure registry. Note that push is required to deploy.
+    required: false
+    type: boolean
+    default: true
+  app-name:
+    description: |
+      A short business friendly name, just to construct the commit message to gitops repo.
+      If this is not provided and gitops-app-name is provided, gitops-app-name will be used.
+      You can specify both app-name and gitops-app-name, in that case, app-name will be used to build the gitops commit message,
+      i.e. app-name can be an abbreviation.
+    required: false
+  gitops-app-name:
+    description: |
+      If provided and
+      - If app-name is not provided, this is used for app-name.
+      - If gitops-overlay-folder is not provided, the folder will be: apps/<gitops-app-name>/overlays/<target-env>
+    required: false
+  gitops-overlay-folder:
+    description: |
+      If this is not provided and gitops-app-name is provided, the value that will be used is: apps/<gitops-app-name>/overlays
+      
+      When target-env contains multiple environments, file <gitops-overlay-folder>/<env>/kustomize.yaml will be edited.
+      When only one environment name is provided, 
+      if <gitops-overlay-folder>/<env> exist, <gitops-overlay-folder>/<env>/kustomize.yaml will be edited,
+      otherwise file <gitops-overlay-folder>/kustomize.yaml will be edited.
+    required: false
+  gitops-repo-deployment-key:
+    description: |
+      The ssh key to clone and update the gitops repository.
+      Mandatory, but mutual exclusive with the pair gitops-repo-app-id gitops-repo-app-private-key
+    required: false
+  gitops-repo-app-id:
+    description: |
+      The github AppID for obtaining a token, which is used to clone and update gitops repository.
+      Mandatory, but mutual exclusive with gitops-repo-deployment-key.
+      If gitops-repo-app-private-key is specified but this input is not specified, default to github action variable GH_ACTION_APPID
+    required: false
+  gitops-repo-app-private-key:
+    description: |
+      The private key of the github AppID for obtaining a token, which is used to clone and update gitops repository.
+      Mandatory, but mutual exclusive with gitops-repo-deployment-key.
+    required: false
+  gitops-repo:
+    description: |
+      For example ecap-tech/eclipse-gitops. If not provided, the github action variable GITOPS_REPO will be used if defined.
+      If GHA variable GITOPS_REPO is not defined either, 
+      repo ecap-tech/eks-prod-001-manifests will be used if the target-env is either prod or stg, 
+      otherwise, default to repo ecap-tech/eks-nonprod-001-manifests
+    required: false
+  gitops-branch:
+    description: If not provided, the github action variable GITOPS_BRANCH will be used, if not, use value main
+    required: false
+
+  # ======================================================
+  #   Support arguments
+  # ======================================================
+  # To access the effective github action variables under the deployment environment
+  vars:
+    description: from the caller workflow, just pass this function call toJson(vars)
+    required: true
+
+  # This is rather a constant declaration
+  push-registry:
+    description: the registry to push the image to
+    required: false
+    default: 653832775139.dkr.ecr.us-east-2.amazonaws.com/
+
+outputs:
+  image-name-to-uri:
+    description: in format image-name=registry/image-name:tag
+    value: ${{ steps.output-image-map.outputs.image-name-to-uri }}
+
+runs:
+  using: composite
+  steps:
+    - name: Sanity Check
+      if: ${{ (inputs.deploy == 'yes' || inputs.deploy == '') && ! inputs.push }}
+      shell: bash
+      run: |
+        echo '::error ::deploy: "${{ inputs.deploy }}"; push: ${{ inputs.push }}. You cannot deploy without pushing.'
+        exit 1
+
+    - name: Log into ECR
+      if: ${{ inputs.push == 'true' }}  # github interprets this as a string, and "false" is true.
+      uses: ./.github/actions/ecr-login
+      with:
+        role-to-assume: arn:aws:iam::${{ inputs.aws-account-id }}:role/github-actions-role
+
+    - uses: ./.github/actions/internal/pre-build
+      with:
+        push: ${{ inputs.push }}
+        image-name: ${{ inputs.image-name }}
+        target-env: ${{ inputs.target-env }}
+        vars: ${{ inputs.vars }}
+        push-registry: ${{ inputs.push-registry }}
+
+    - id: get-ref-name
+      if: ${{ env.ALREADY_BUILT != 'yes' }}
+      uses: ./.github/actions/get-trigger-ref-name
+
+    - name: Ensure ECR registry
+      if: ${{ inputs.push == 'true' }}  # github interprets this as a string, and "false" is true.
+      shell: bash
+      run: set -x; echo '${{ inputs.image-name }}'; aws ecr create-repository --repository-name '${{ inputs.image-name }}' || true; echo ---; echo '${{ env.PULL_IMAGE_REPO }}'
+
+    - name: Build and push with Dockerfile
+      if: ${{ env.ALREADY_BUILT != 'yes' }}
+      uses: docker/build-push-action@v6
+      with:
+        # Only push if we've been requested to deploy the image
+        push: ${{ inputs.push }}
+        file: ${{ inputs.dockerfile || 'Dockerfile' }}
+        context: ${{ inputs.build-context || '.' }}
+        build-contexts: ${{ inputs.build-contexts-additional }}
+        tags: ${{ env.PUSH_IMAGE_URIS }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        provenance: false
+        secrets: ${{ inputs.build-secrets }}
+        build-args: |
+          ${{ inputs.build-args }}
+          APP_REVISION=${{ env.GITHUB_SHA_SHORT }}
+          APP_TAG=${{ (steps.get-ref-name.outputs.ref_type == 'tag' && steps.get-ref-name.outputs.ref_name) || '' }}
+
+    - id: output-image-map
+      if: ${{ inputs.push == 'true' }}  # github interprets this as a string, and "false" is true.
+      name: set output
+      shell: bash
+      run: |
+        echo "image-name-to-uri=\"${{ inputs.image-name }}=${{ env.PULL_IMAGE_REPO }}/${{ inputs.image-name }}:${{ env.PRIMARY_IMAGE_TAG }}\"" >> $GITHUB_OUTPUT
+
+    - name: update manifest
+      # consider empty = no (default)
+      if: ${{ inputs.deploy == 'yes' || inputs.deploy == '' }}
+      uses: ./.github/actions/update-manifest
+      with:
+        app-name: ${{ inputs.app-name }}
+        gitops-app-name: ${{ inputs.gitops-app-name}}
+        gitops-overlay-folder: ${{ inputs.gitops-overlay-folder }}
+        gitops-repo-deployment-key: ${{ inputs.gitops-repo-deployment-key }}
+        gitops-repo-app-id: ${{ inputs.gitops-repo-app-id }}
+        gitops-repo-app-private-key: ${{ inputs.gitops-repo-app-private-key }}
+        target-env: ${{ inputs.target-env }}
+        images-map: ${{ steps.output-image-map.outputs.image-name-to-uri }}
+        gitops-repo: ${{ inputs.gitops-repo }}
+        gitops-branch: ${{ inputs.gitops-branch }}
+        vars: ${{ inputs.vars }}

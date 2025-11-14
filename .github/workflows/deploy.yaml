@@ -1,0 +1,151 @@
+name: Deploy
+
+# Always build on push -- target env == ''; never rebuild if an env is given, as that will fail:
+# tag (git sha) already exists.
+run-name: >-
+  [Build and Deploy -
+  ${{ ( github.event_name == 'release' && github.event.release.tag_name)
+      || (github.event.head_commit.message != '' && github.event.head_commit.message)
+      || github.sha }}]
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      #- *   # Developers get things deployed for every push to their dev branches.
+
+  workflow_dispatch: {}
+
+  # Micro-services don't use releases -- they use the main branch
+  #release:
+  #  types: [ published ]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  #BASE_BUILDER_IMAGE: eclipse-base:sdk-8.0-b6
+  #BASE_RUNTIME_IMAGE: eclipse-base:default-8.0.15-jammy-chiseled-extra-b4
+  DEV_ACCOUNT_ID: 653832775139
+  DEV_PULL_URL: 653832775139.dkr.ecr.us-east-2.amazonaws.com/decaplabs
+  PROD_ACCOUNT_ID: 653832775139
+  PROD_PULL_URL: 653832775139.dkr.ecr.us-east-2.amazonaws.com/decaplabs
+
+
+concurrency:
+  group: ${{github.repository}}-${{ github.workflow }}-${{ github.ref }}
+  # Don't deploy two things at the same time ;-)
+  cancel-in-progress: true
+
+jobs:
+  snyk-codescan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+        with:
+          persist-credentials: false
+      - name: Snyk Codescan
+        uses: ./.github/actions/snyk-codescan
+        with:
+          SHARED_MODULE_READ_KEY: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}
+          vars: ${{ toJson(vars) }} # includes shored read ID
+          SNYK_TOKEN: ${{ secrets.LSQ_SNYK_TOKEN }}
+
+  snyk-dockerscan:
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-dev-dockerscan   # referenced for image output
+      - snyk-codescan   # No point spending twice -- but increases latency?
+    steps:
+      - uses: actions/checkout@master
+        with:
+          persist-credentials: false
+      #- name: Snyk Dockerscan
+      #  uses: ./.github/actions/snyk-dockerscan
+      #  with:
+      #    vars: ${{ toJson(vars) }} # includes shored read ID
+      #    SNYK_TOKEN: ${{ secrets.LSQ_SNYK_TOKEN }}
+
+  #prepare:
+  #  needs:
+  #    - snyk-codescan
+  #  # TODO: Desire: put this job into build-generic-module. (Is the pull repo always the same? is there something we can
+  #  #       pass in to identify it?)
+  #  runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+  #  outputs:
+  #    repo-name: ${{ steps.info.outputs.GIT_REPO }}
+  #  steps:
+  #    - name: Set various informational variables
+  #      id: info
+  #      # The AWS account ID of the EContainerRegistry for this account
+  #      run: |
+  #        # redirect stdout to output file
+  #        exec >> $GITHUB_OUTPUT
+  #        echo "GIT_REPO=${GITHUB_REPOSITORY##*/}"
+
+  deploy-dev-dockerscan:
+    needs:
+      - snyk-codescan
+    uses: ./.github/workflows/build-deploy.yaml
+    with:
+      deploy: no
+      push: false
+      environment: dev
+      gitops-repo: decaplabs/flux
+      vars: ${{ toJson(vars) }}
+    secrets:
+      GO_PRIVATE_MODULE_READER_PRIVATE_KEY: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}
+
+#  # With this one, the image is built -- now the deploy settings will deploy it to dev environment
+#  deploy-dev:
+#    needs:
+#      - snyk-codescan
+#      - snyk-dockerscan
+#    uses: ./.github/workflows/build-deploy.yaml
+#    with:
+#      deploy: yes
+#      environment: dev
+#      gitops-repo: decaplabs/flux
+#      FLUX_DEPLOY_APP_ID: ${{ vars.FLUX_DEPLOY_APP_ID }}
+#      vars: ${{ toJson(vars) }}
+#    secrets:
+#      FLUX_DEPLOY_PRIVATE_KEY: ${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}
+#      # TODO: It's building twice... but I'm not sure how to stop that.
+#      GO_PRIVATE_MODULE_READER_PRIVATE_KEY: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}
+#
+#  deploy-stg:
+#    needs:
+#      - deploy-dev   # referenced for output
+#      #- deploy-qa
+#      #- deploy-uat
+#      - snyk-dockerscan # because maybe bypass qa env
+#    uses: ./.github/workflows/build-deploy.yaml
+#    with:
+#      deploy: yes
+#      environment: stg
+#      gitops-repo: decaplabs/flux
+#      FLUX_DEPLOY_APP_ID: ${{ vars.FLUX_DEPLOY_APP_ID }}
+#      vars: ${{ toJson(vars) }}
+#    secrets:
+#      FLUX_DEPLOY_PRIVATE_KEY: ${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}
+#
+  deploy-prod:
+    needs:
+#      - deploy-dev   # referenced for output
+      #- deploy-qa
+      #- deploy-uat
+#      - deploy-stg
+      - snyk-codescan
+#      - snyk-dockerscan
+    uses: ./.github/workflows/build-deploy.yaml
+    with:
+      deploy: yes
+      environment: prod
+      gitops-repo: decaplabs/flux
+      gitops-branch: prod
+      FLUX_DEPLOY_APP_ID: ${{ vars.FLUX_DEPLOY_APP_ID }}
+      vars: ${{ toJson(vars) }}
+    secrets:
+      FLUX_DEPLOY_PRIVATE_KEY: ${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}

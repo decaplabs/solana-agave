@@ -1,0 +1,166 @@
+name: Deploy Hotfix
+
+# Always build on push -- target env == ''; never rebuild if an env is given, as that will fail:
+# tag (git sha) already exists.
+run-name: >-
+  [Build and Deploy Hotfix -
+  ${{ ( github.event_name == 'release' && github.event.release.tag_name)
+      || (github.event.head_commit.message != '' && github.event.head_commit.message)
+      || github.sha }}]
+
+on:
+  push:
+    branches:
+      - hotfix/*
+      - hotfix-*
+      #- *   # Developers get things deployed for every push to their dev branches.
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  #BASE_BUILDER_IMAGE: eclipse-base:sdk-8.0-b6
+  #BASE_RUNTIME_IMAGE: eclipse-base:default-8.0.15-jammy-chiseled-extra-b4
+  DEV_ACCOUNT_ID: 653832775139
+  DEV_PULL_URL: 653832775139.dkr.ecr.us-east-2.amazonaws.com/
+  PROD_ACCOUNT_ID: 653832775139
+  PROD_PULL_URL: 653832775139.dkr.ecr.us-east-2.amazonaws.com/
+
+
+concurrency:
+  group: ${{github.repository}}-${{ github.workflow }}-${{ github.ref }}
+  # Don't deploy two things at the same time ;-)
+  cancel-in-progress: true
+
+jobs:
+  has-pr:
+    # We need to know if this commit is part of a PR branch. If so, then exit.
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    outputs:
+      is-pr: ${{ steps.is-pr.outputs.is-pr }}
+    steps:
+      - name: 'Is this part of a PR?'
+        id: is-pr
+        shell: bash
+        run: |
+          pr_hashes="$(
+          # "Authorization" based on `permissions:' for the workflow, above \
+          curl -Ls \
+              -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "Authorization: Bearer ${{ github.token }}" \
+              https://api.github.com/repos/${{ github.repository }}/pulls |
+
+              # If there's a line that looks like this in the "get PRs" output, we're good.
+              grep '"sha": *"')
+              )"
+          set -x
+
+          grep -q '"sha": *"${{ github.sha }}"' <<< "$pr_hashes" &&
+            echo 'is-pr=true' >> "$GITHUB_OUTPUT" || {
+              echo 'is-pr=false' >> "$GITHUB_OUTPUT"
+              echo '::error ::Current git SHA hash (${{ github.sha }}) not found in any returned PRs:'
+              echo "::error ::$pr_hashes"
+              # Don't exit with error; set the output false.
+            }
+
+  snyk-codescan:
+    needs:
+     - has-pr
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+        with:
+          persist-credentials: false
+      - name: Snyk Codescan
+        uses: ./.github/actions/snyk-codescan
+        with:
+          vars: ${{ toJson(vars) }} # includes shored read ID
+          SNYK_TOKEN: ${{ secrets.LSQ_SNYK_TOKEN }}
+
+  snyk-dockerscan:
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-dev-build   # referenced for output
+      - snyk-codescan
+    if: ${{ needs.has-pr.outputs.is-pr }}
+    steps:
+      - name: Snyk Dockerscan
+        uses: ./.github/actions/snyk-dockerscan
+        with:
+          vars: ${{ toJson(vars) }} # includes shored read ID
+          SNYK_TOKEN: ${{ secrets.LSQ_SNYK_TOKEN }}
+
+  prepare:
+    # TODO: Desire: put this job into build-generic-module. (Is the pull repo always the same? is there something we can
+    #       pass in to identify it?)
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    outputs:
+      repo-name: ${{ steps.info.outputs.GIT_REPO }}
+    steps:
+      - name: Set various informational variables
+        id: info
+        # The AWS account ID of the EContainerRegistry for this account
+        run: |
+          # redirect stdout to output file
+          exec >> $GITHUB_OUTPUT
+          echo "GIT_REPO=${GITHUB_REPOSITORY##*/}"
+
+  # REQUIRED -- this builds the image, and there's no "wait" step to
+  # XXX Image built on PR creation, how does this wait for that?
+  deploy-dev-build:
+    needs:
+      - has-pr
+      - snyk-codescan
+    if: ${{ needs.has-pr.outputs.is-pr }}
+    uses: ./.github/workflows/build-deploy.yaml
+    with:
+      deploy: no
+      push: no
+      environment: dev
+      gitops-repo: ecap-tech/eks-nonprod-001-manifests
+      vars: ${{ toJson(vars) }}
+    secrets:
+      SHARED_MODULE_READ_KEY: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}
+
+  deploy-dev:
+    needs:
+      - snyk-codescan
+    uses: ./.github/workflows/build-deploy.yaml
+    with:
+      deploy: yes
+      environment: dev
+      gitops-repo: ecap-tech/eks-nonprod-001-manifests
+      FLUX_DEPLOY_APP_ID: ${{ vars.FLUX_DEPLOY_APP_ID }}
+      vars: ${{ toJson(vars) }}
+    secrets:
+      SHARED_MODULE_READ_KEY: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}
+      FLUX_DEPLOY_PRIVATE_KEY: ${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}
+
+  deploy-staging:
+    #needs:
+    #  - snyk-codescan
+    uses: ./.github/workflows/build-deploy.yaml
+    with:
+      deploy: yes
+      environment: stg
+      gitops-repo: ecap-tech/eks-nonprod-001-manifests
+      FLUX_DEPLOY_APP_ID: ${{ vars.FLUX_DEPLOY_APP_ID }}
+      vars: ${{ toJson(vars) }}
+    secrets:
+      FLUX_DEPLOY_PRIVATE_KEY: ${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}
+
+  deploy-prod:
+    #needs:
+    #  - snyk-codescan
+    uses: ./.github/workflows/build-deploy.yaml
+    with:
+      deploy: yes
+      environment: stg
+      gitops-repo: ecap-tech/eks-nonprod-001-manifests
+      gitops-branch: prod
+      FLUX_DEPLOY_APP_ID: ${{ vars.FLUX_DEPLOY_APP_ID }}
+      vars: ${{ toJson(vars) }}
+    secrets:
+      FLUX_DEPLOY_PRIVATE_KEY: ${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}
+

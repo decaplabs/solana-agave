@@ -1,0 +1,75 @@
+name: Check workflow pre-conditions
+description: The action to call at the first workflow job to validate the validity of the environment name, release tags...
+
+inputs:
+  env-name:
+    description: |
+      The deployment environment, such as dev qa uat load stg prod. Can be either a single name or a comma-separated list of names.
+      Note: stg and prod must not be mixed with other environments. stg and prod must not be deployed at the same time.
+    required: true
+  supported-env-names:
+    description: |
+      whitespace separated list of environment names, such as: dev qa uat load stg prod. Default empty, no validation
+    required: false
+    default: ""
+  production-tag-prefix:
+    description: when the target env name is prod, it requires the workflow must run on a tag. If this input is provided, the tag must has this prefix.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Ensure target environment
+      shell: bash
+      run: |
+        # step: Ensure target environment
+        IFS=',' read -ra env_list <<< "${{ inputs.env-name }}"
+        has_prod=false
+        has_stg=false
+        has_nonprod=false
+        for deployment_env in "${env_list[@]}"; do
+          # trim all whitespaces
+          deployment_env=$(echo "$deployment_env" | tr -d '[:space:]')
+          if [ "${{inputs.supported-env-names}}" != "" ]; then
+            if [[ ! " ${{inputs.supported-env-names}} " =~ " $deployment_env " ]]; then
+              echo "::error ::Target env name contains invalid value: ${deployment_env}. Expected one of: ${{inputs.supported-env-names}}"
+              exit 1
+            fi
+          fi
+          if [ "$deployment_env" == "prod" ]; then
+            has_prod=true
+          elif [ "$deployment_env" == "stg" ]; then
+            has_stg=true
+          elif [ "$deployment_env" != "" ]; then
+            has_nonprod=true
+          fi
+        done
+        if [ "$has_prod" = true ] && [ "$has_stg" = true ]; then
+          echo "::error ::target-env prod and stg must not be deployed toghether ${{ inputs.target-env }}"
+          exit 1
+        fi
+        if { [ "$has_prod" = true ] || [ "$has_stg" = true ]; } && [ "$has_nonprod" = true ]; then
+          echo "::error ::target-env must not mix prod/stg with other nonprod environments: ${{ inputs.target-env }}"
+          exit 1
+        fi
+
+    - id: get-ref-name
+      if: ${{ inputs.env-name == 'prod' }}
+      uses: ./.github/actions/get-trigger-ref-name
+
+    - name: Make sure the production release is done on a tag
+      if: ${{ inputs.env-name == 'prod' && steps.get-ref-name.outputs.ref_type != 'tag' }}
+      shell: bash
+      run: |
+        # step: Make sure the production release is done on a tag
+        echo "::error ::Production release must be done on a tag. But got ${{steps.get-ref-name.outputs.ref_type}} ${{steps.get-ref-name.outputs.ref_name}}"
+        exit 1
+
+    - name: Check production tag prefix
+      if: ${{ inputs.env-name == 'prod' && inputs.production-tag-prefix != '' && !startsWith(steps.get-ref-name.outputs.ref_name, inputs.production-tag-prefix) }}
+      shell: bash
+      run: |
+        # step: Check production tag prefix
+        echo "::error ::Production tag name must start with \"${{inputs.production-tag-prefix}}\" but got \"${{steps.get-ref-name.outputs.ref_name}}\""
+        exit 1
