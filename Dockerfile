@@ -102,6 +102,5 @@ EXPOSE 8899 8900 9900
 CMD ["solana-test-validator", \
      "--ledger", "/solana/ledger", \
      "--rpc-port", "8899", \
-     "--rpc-bind-address", "0.0.0.0", \
      "--faucet-port", "9900", \
      "--log"]
