@@ -1,0 +1,158 @@
+
+name: Build-Deploy
+run-name: >-
+  [Build and Deploy -
+  ${{ ( github.event_name == 'release' && github.event.release.tag_name)
+      || (github.event.head_commit.message != '' && github.event.head_commit.message)
+      || github.sha }}]
+on:
+  workflow_call:
+    inputs:
+      deploy:
+        type: string
+        description: Deploy to gitops repo? y/n
+        default: no # same as build-generic-module
+        required: false
+
+      FLUX_DEPLOY_APP_ID:
+        description: the vars.FLUX_DEPLOY_APP_ID -- the github app id of the application that has write access to the flux repo. Corresponds to the secret private key, below.
+        type: string
+        required: false # When push is true.
+      environment:
+        description: The deploy-to environment. Must match an environment defined in the Repo Settings.
+        type: string
+        required: true
+      gitops-branch:
+        description: The branch of the gitops-repo to update with this deployment.
+        type: string
+        required: false
+      gitops-repo:
+        description: The gitops (manifests) repo to update. Defaults to the non-prod repo. Must include github org.
+        type: string
+        default: decaplabs/flux
+      push:
+        description: Whether to push this image to AWS ECR. If only syntax-checking via build, set false.
+        type: boolean
+        default: true
+      vars:
+        description: "The workflow variables. Pass as vars: $ {{ toJson(vars) }}"
+        type: string
+        required: true
+    secrets:
+      GO_PRIVATE_MODULE_READER_PRIVATE_KEY:
+        description: Key to be able to access the Shared Module Reader github app for Go modules, to be able to pull and build them.
+        required: false  # Only required for build. No build, no required - but no present, no successful build.
+      FLUX_DEPLOY_PRIVATE_KEY:
+        description: The private key of the github app with write access to the flux repo
+        required: false # when push is true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  #BASE_BUILDER_IMAGE: eclipse-base:sdk-8.0-b6
+  #BASE_RUNTIME_IMAGE: eclipse-base:default-8.0.15-jammy-chiseled-extra-b4
+  PROD_ACCTID: 653832775139
+  PROD_PULL_URL: 653832775139.dkr.ecr.us-east-2.amazonaws.com/decaplabs
+  DEV_ACCTID: 653832775139
+  DEV_PULL_URL: 653832775139.dkr.ecr.us-east-2.amazonaws.com/decaplabs
+
+# Concurrency is controlled by the caller
+#concurrency:
+#  group: ${{github.repository}}-${{ github.workflow }}-${{ github.ref }}
+#  # Don't deploy two things at the same time ;-)
+#  cancel-in-progress: true
+
+jobs:
+  prepare:
+    # TODO: Desire: put this job into build-generic-module. (Is the pull repo always the same? is there something we can
+    #       pass in to identify it?)
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    outputs:
+      repo-name: ${{ steps.info.outputs.GIT_REPO }}
+      private-modules-token: ${{ steps.private-modules-token.outputs.token }}
+    environment: ${{ inputs.environment }}
+    steps:
+      # It is assumed that the env, as entered by the user, is valid.
+      # Only for eCl...
+      #- uses: ./.github/actions/validate-target-env
+      #  with:
+      #    env-name: ${{ inputs.environment }}
+
+      - name: Set various informational variables
+        id: info
+        run: |
+          # redirect stdout to output file
+          exec >> $GITHUB_OUTPUT
+          echo "GIT_REPO=${GITHUB_REPOSITORY##*/}"
+
+  build:
+    needs: [ prepare ]
+    # environment: only for workflow purposes -- build *once* for ALL environments.
+    environment: ${{ inputs.environment }}
+    runs-on: ${{ fromJson(inputs.vars).RUNNER || 'ubuntu-latest' }}
+    env:
+      # This will be deployed to the dev environment, but remember - build *once* for ALL environments.
+      TARGET_ENV_NAME: ${{ inputs.environment }}
+    outputs:
+      image-name-to-uri: ${{ steps.build.outputs.image-name-to-uri }}
+      primary-image-tag: ${{ env.PRIMARY_IMAGE_TAG }}
+    steps:
+      - name: Get Go version
+        id: golangver
+        shell: bash
+        run: |
+            set -x
+            exec >> $GITHUB_OUTPUT
+            echo -n HAS_GO_MOD=
+            [ -f go.mod ] && echo true || echo false
+            echo -n GOLANG_VER=
+            [ -f go.mod ] || exit 0
+            grep --max-count=1 '^go\>' go.mod | grep -o '[0-9]\+\.[0-9]\+'
+
+      # Use the Github App to generate a temporary access token that can be used to pull
+      # the private Go module repositories
+      - name: Generate Go Module Token
+        # Only run while building the image - for the `dev' environment.
+        if: ${{ (inputs.environment == 'dev' || inputs.environment == '') && steps.golangver.outputs.HAS_GO_MOD == 'true' }}
+        id: private-modules-token
+        uses: actions/create-github-app-token@v2
+        with:
+          # Github App ID that has access to private go module repos
+          app-id: ${{ fromJson(inputs.vars).GO_PRIVATE_MODULE_READER_APP_ID }}
+          # The app token for this app
+          private-key: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: read
+
+      - uses: actions/checkout@master
+        with:
+          persist-credentials: false
+
+        # "Can't find 'action.yml', 'action.yaml' or 'Dockerfile' under ..."
+        # -> you haven't checked out the code yet. uses: actions/checkout.
+      - name: Docker Build
+        id: build
+        # NOTICE - not build dotnet
+        uses: ./.github/actions/build-generic-module
+        with:
+          app-name: ${{ needs.prepare.outputs.repo-name }}
+          image-name: ${{ needs.prepare.outputs.repo-name }}
+          target-env: dev   # Static -- build once, deploy-to-all (and deploy immediately to dev)
+          vars: ${{ inputs.vars }}
+          build-secrets: |
+            ssh_privkey=${{ steps.private-modules-token.outputs.token || '"not obtained, wrong environment"' }}
+          # build-secrets: SSH_PRIVATE_KEY for lsq go-auth, go-logging repo/module access
+
+          # default: no. Update the manifest repo with this -- for dev.
+          deploy: ${{ inputs.deploy }}
+          push: ${{ inputs.push }}
+          gitops-branch: ${{ inputs.gitops-branch }}
+          gitops-overlay-folder: apps/${{ needs.prepare.outputs.repo-name}}/overlays    # required
+          gitops-repo-app-id: ${{ vars.FLUX_DEPLOY_APP_ID }}
+          gitops-repo-app-private-key: ${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}
+          gitops-repo: ${{ inputs.gitops-repo }}
+
+          # tags: - you don't need to (shouldn't) do this.
+          #  - dev-latest
