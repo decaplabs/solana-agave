@@ -95,9 +95,9 @@ runs:
         
         if [ "${{ fromJson(inputs.vars).PULL_IMAGE_REPO }}" = "" ]; then
           if [ "$has_prod_or_stg" = true ]; then
-            echo "PULL_IMAGE_REPO=${{ inputs.prod_stg_acct }}.dkr.ecr.us-east-1.amazonaws.com/" >> $GITHUB_ENV
+            echo "PULL_IMAGE_REPO=${{ inputs.prod_stg_acct }}.dkr.ecr.us-east-2.amazonaws.com/" >> $GITHUB_ENV
           else
-            echo "PULL_IMAGE_REPO=${{ inputs.nonprod_acct }}.dkr.ecr.us-east-1.amazonaws.com/" >> $GITHUB_ENV
+            echo "PULL_IMAGE_REPO=${{ inputs.nonprod_acct }}.dkr.ecr.us-east-2.amazonaws.com/" >> $GITHUB_ENV
           fi
         else
           echo "PULL_IMAGE_REPO=${{ fromJson(inputs.vars).PULL_IMAGE_REPO }}" >> $GITHUB_ENV

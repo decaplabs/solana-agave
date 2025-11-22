@@ -116,4 +116,5 @@ jobs:
       push: false   # Build-check only.
       vars: ${{ toJson(vars) }}
     secrets:
+      GA_REPO_PERMISSIONS_EXAMINATION_KEY: ${{ secrets.GA_REPO_PERMISSIONS_EXAMINATION_KEY }}
       GO_PRIVATE_MODULE_READER_PRIVATE_KEY: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}

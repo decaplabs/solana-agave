@@ -32,6 +32,11 @@ inputs:
       variable AZURE_ACR_SECRET
     required: false
 
+  GA_REPO_PERMISSIONS_EXAMINATION_KEY:
+    description: The key used to sign into the github app to check the repository environments for proper protection rules
+    required: false
+    type: string
+
   # ======================================================
   # Options when using Dockerfile to build
   # ======================================================
@@ -192,13 +197,16 @@ runs:
       name: set output
       shell: bash
       run: |
-        echo "image-name-to-uri=\"${{ inputs.image-name }}=${{ env.PULL_IMAGE_REPO }}/${{ inputs.image-name }}:${{ env.PRIMARY_IMAGE_TAG }}\"" >> $GITHUB_OUTPUT
+        ecr_repo='${{ env.PULL_IMAGE_REPO }}'   # 'syntax
+
+        echo "image-name-to-uri=\"${{ inputs.image-name }}=${ecr_repo%/}/${{ inputs.image-name }}:${{ env.PRIMARY_IMAGE_TAG }}\"" >> $GITHUB_OUTPUT
 
     - name: update manifest
       # consider empty = no (default)
       if: ${{ inputs.deploy == 'yes' || inputs.deploy == '' }}
       uses: ./.github/actions/update-manifest
       with:
+        GA_REPO_PERMISSIONS_EXAMINATION_KEY: ${{ inputs.GA_REPO_PERMISSIONS_EXAMINATION_KEY }}
         app-name: ${{ inputs.app-name }}
         gitops-app-name: ${{ inputs.gitops-app-name}}
         gitops-overlay-folder: ${{ inputs.gitops-overlay-folder }}

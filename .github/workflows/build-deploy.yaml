@@ -39,6 +39,8 @@ on:
         type: string
         required: true
     secrets:
+      GA_REPO_PERMISSIONS_EXAMINATION_KEY:
+        description: Used to activate the github app to read environment-protection information from repos
       GO_PRIVATE_MODULE_READER_PRIVATE_KEY:
         description: Key to be able to access the Shared Module Reader github app for Go modules, to be able to pull and build them.
         required: false  # Only required for build. No build, no required - but no present, no successful build.
@@ -139,7 +141,7 @@ jobs:
         with:
           app-name: ${{ needs.prepare.outputs.repo-name }}
           image-name: ${{ needs.prepare.outputs.repo-name }}
-          target-env: dev   # Static -- build once, deploy-to-all (and deploy immediately to dev)
+          target-env: ${{ inputs.environment }}
           vars: ${{ inputs.vars }}
           build-secrets: |
             ssh_privkey=${{ steps.private-modules-token.outputs.token || '"not obtained, wrong environment"' }}
@@ -153,6 +155,8 @@ jobs:
           gitops-repo-app-id: ${{ vars.FLUX_DEPLOY_APP_ID }}
           gitops-repo-app-private-key: ${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}
           gitops-repo: ${{ inputs.gitops-repo }}
+
+          GA_REPO_PERMISSIONS_EXAMINATION_KEY: ${{ secrets.GA_REPO_PERMISSIONS_EXAMINATION_KEY }}
 
           # tags: - you don't need to (shouldn't) do this.
           #  - dev-latest

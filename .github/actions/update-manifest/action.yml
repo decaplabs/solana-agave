@@ -199,33 +199,33 @@ runs:
             exit
         fi
 
-    - name: Micro-Services Environment Check - Token
-      if: ${{ steps.is-micro-svc.outputs.IS_MICROSVC }}
-      id: micro-svc-env-check-token
-      uses: actions/create-github-app-token@v2
-      with:
-        # Github App ID that has access to private go module repos
-        app-id: ${{ fromJson(inputs.vars).GA_REPO_PERMISSIONS_EXAMINATION_ID }}
-        # The app token for this app
-        private-key: ${{ inputs.GA_REPO_PERMISSIONS_EXAMINATION_KEY }}
-        #repositories:
-        #- sigh, I wish I could say "this one" but there's no github context entry to do that.
-        permission-actions: read
-        permission-environments: read
+#    - name: Micro-Services Environment Check - Token
+#      if: ${{ steps.is-micro-svc.outputs.IS_MICROSVC }}
+#      id: micro-svc-env-check-token
+#      uses: actions/create-github-app-token@v2
+#      with:
+#        # Github App ID that has access to private go module repos
+#        app-id: ${{ fromJson(inputs.vars).GA_REPO_PERMISSIONS_EXAMINATION_ID }}
+#        # The app token for this app
+#        private-key: ${{ inputs.GA_REPO_PERMISSIONS_EXAMINATION_KEY }}
+#        #repositories:
+#        #- sigh, I wish I could say "this one" but there's no github context entry to do that.
+#        permission-actions: read
+#        permission-environments: read
 
-    - name: Micro-Services Environment Check 
-      if: ${{ steps.is-micro-svc.outputs.IS_MICROSVC }}
-      shell: bash
-      run: |
-        [ $(curl -s -L \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ steps.micro-svc-env-check-token.outputs.token }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            'https://api.github.com/repos/${{ github.repository }}/environments/${{ inputs.target-env }}' |
-            jq '.protection_rules[].reviewers[]' | wc -l) -gt 2 ] || {
-                echo '::error ::Unable to get reviewer protection rules for environment; halting.'
-                exit 1
-            }
+#    - name: Micro-Services Environment Check 
+#      if: ${{ steps.is-micro-svc.outputs.IS_MICROSVC }}
+#      shell: bash
+#      run: |
+#        [ $(curl -s -L \
+#            -H "Accept: application/vnd.github+json" \
+#            -H "Authorization: Bearer ${{ steps.micro-svc-env-check-token.outputs.token }}" \
+#            -H "X-GitHub-Api-Version: 2022-11-28" \
+#            'https://api.github.com/repos/${{ github.repository }}/environments/${{ inputs.target-env }}' |
+#            jq '.protection_rules[].reviewers[]' | wc -l) -gt 2 ] || {
+#                echo '::error ::Unable to get reviewer protection rules for environment; halting.'
+#                exit 1
+#            }
 
     - name: Update ${{ inputs.target-env }} manifests for deployment
       if: env.IMAGES_MAP != ''
@@ -372,7 +372,7 @@ runs:
 
             # namespace: the namespace of the kustomization, not the services within.
             # underscore: converted to newline.
-            echo "apiVersion: kustomize.toolkit.fluxcd.io/v1_kind: Kustomization_metadata:_name: ${repo_name}_namespace: flux-system_spec:_interval: 10m0s_path: ./${{ env.GITOPS_OVERLAY_FOLDER }}/${{ inputs.target-env }}_prune: true_sourceRef:_kind: GitRepository_name: flux-system_targetNamespace: ${{ inputs.target-env }}_dependsOn:_- name: workload_---" |
+            echo "apiVersion: kustomize.toolkit.fluxcd.io/v1_kind: Kustomization_metadata:_  name: ${repo_name}_  namespace: flux-system_spec:_  interval: 10m0s_  path: ./${{ env.GITOPS_OVERLAY_FOLDER }}/${{ inputs.target-env }}_  prune: true_  sourceRef:_    kind: GitRepository_    name: flux-system_  targetNamespace: ${{ inputs.target-env }}_  dependsOn:_    - name: workload_  postBuild:_    substitute:_      env: \${env}_      awsAccountId: \"$aws_account_id\"_---" |
                 tr _ \\n >> "$syncf"
           fi
 

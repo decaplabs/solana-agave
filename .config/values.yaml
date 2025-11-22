@@ -1,4 +1,4 @@
 type: deployment
 
 ingress:
-  enabled: true
+  enabled: false

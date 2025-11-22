@@ -92,7 +92,7 @@ members = [
     "scheduler-bindings",
     "scheduling-utils",
     "send-transaction-service",
-    "snapshots",
+    "snapshots", "solana-counter",
     "stake-accounts",
     "storage-bigtable",
     "storage-bigtable/build-proto",
