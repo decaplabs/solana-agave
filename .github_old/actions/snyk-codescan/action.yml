@@ -1,0 +1,140 @@
+name: Snyk Codescan
+description: |
+    Use Snyk service to scan the code of this repository.
+    Be sure to check-out the code prior to using this action.
+
+inputs:
+  lang:
+    description: The language of this codebase. The only accepted language is- go
+    default: go
+    required: false
+
+  GOPRIVATE:
+    description: The GOPRIVATE environment variable to pass to `go'.
+    default: github.com/ecap-tech/*,github.com/lsqlabs/*
+    required: false
+
+  SNYK_TOKEN:
+    description: The Snyk service token for authentication and reporting. Get this from secrets.LSQ_SNYK_TOKEN.
+    required: true
+
+  go-module-token:
+    description: Look up usages of secrets.SHARED_MODULE_READ_KEY. This is the Github App token used to gain access to private Go module repositories.
+    required: false
+
+  SHARED_MODULE_READ_KEY:
+    description: This should be the Github App token. If this is an SSH key, it can be passed to Dockerfile's to be able to read from private Github repos. This is an SSH key, and go-module-token should be preferred -- Dockerfiles should be rewritten. This only applies to lsqlabs/ projects.
+    required: false
+
+  vars:
+    description: from the caller workflow, pass this to function toJson(vars). See README.
+    required: false
+
+#secrets:
+# We can't pass secrets to a composite action, only a called workflow.
+
+runs:
+  using: composite
+  #env:
+  #  GITHUB_SHA: ${{ fromJson(inputs.vars).GITHUB_SHA }}
+
+  steps:
+    - uses: actions/checkout@master
+      with:
+        persist-credentials: false
+
+    - name: Get Go version
+      id: golangver
+      shell: bash
+      run: |
+          set -x
+          exec >> $GITHUB_OUTPUT
+          echo -n HAS_GO_MOD=
+          [ -f go.mod ] && echo true || echo false
+          echo -n GOLANG_VER=
+          [ -f go.mod ] || exit 0
+          grep --max-count=1 '^go\>' go.mod | grep -o '[0-9]\+\.[0-9]\+'
+
+    # Use the Github App to generate a temporary access token that can be used to pull
+    # the private Go module repositories
+    - name: Generate Go Module Token
+      id: private-modules-token
+      if: ${{ steps.golangver.outputs.HAS_GO_MOD == 'true' }}
+      uses: actions/create-github-app-token@v2
+      with:
+        # Github App ID that has access to private go module repos
+        app-id: ${{ fromJson(inputs.vars).SHARED_MODULE_READ_ID }}
+        # The app token for this app
+        private-key: ${{ inputs.SHARED_MODULE_READ_KEY }}
+        permission-contents: read
+        owner: ${{ github.repository_owner }}
+
+    - name: Set up Snyk
+      if: ${{ steps.golangver.outputs.HAS_GO_MOD == 'true' }}
+      uses: snyk/actions/setup@v1.0.0
+    - uses: actions/setup-go@v1
+      if: ${{ steps.golangver.outputs.HAS_GO_MOD == 'true' }}
+      with:
+        go-version: ${{ steps.golangver.outputs.GOLANG_VER }}
+
+
+    - name: Configure Git environment
+      if: ${{ steps.golangver.outputs.HAS_GO_MOD == 'true' }}
+      env:
+        # Shared module read key is lsqlabs/go-* only. Only lsqlabs.
+        # We _prefer_ the GITHUB_TOKEN -- the github app to pull from go-* repos.
+        SHARED_MODULE_READ_KEY: ${{ inputs.SHARED_MODULE_READ_KEY }}
+        GITHUB_TOKEN: ${{ steps.private-modules-token.outputs.token }}
+        # https://go.dev/doc/faq#git_https
+        GOPRIVATE: ${{ inputs.GOPRIVATE }}
+      shell: bash
+      run: |
+        if [ -n "${GITHUB_TOKEN:0:1}" ]; then
+          # Prefer the github token.
+
+          # Trial-and-error.
+          git config --global url."https://git:$GITHUB_TOKEN@github.com/ecap-tech/".insteadOf "https://github.com/ecap-tech/";
+          git config --global url."https://ignored-user:$GITHUB_TOKEN@github.com/ecap-tech/".insteadOf "ssh://github.com:ecap-tech/";
+          git config --global url."https://ignored-user:$GITHUB_TOKEN@github.com/ecap-tech/".insteadOf "git+ssh://github.com:ecap-tech/";
+          git config --global url."https://ignored-user:$GITHUB_TOKEN@github.com/ecap-tech/".insteadOf "git@github.com:ecap-tech/";
+
+        elif [ "${SHARED_MODULE_READ_KEY#*PRIVATE}" != "$SHARED_MODULE_READ_KEY" ]; then
+          # We have SSH key access -- this works for inside dockerfile builds.
+          #echo "Shared key: ${SHARED_MODULE_READ_KEY:5:20}"
+          [ -d ~/.ssh ] || mkdir ~/.ssh
+          touch ~/.ssh/id_rsa
+          chmod 0600 ~/.ssh/id_rsa
+          echo "$SHARED_MODULE_READ_KEY" > ~/.ssh/id_rsa
+          git config --global url."git@github.com:ecap-tech/".insteadOf "https://github.com/ecap-tech/";
+        fi
+        #git config -l | grep '^http\.' | cut -d= -f1 | xargs -d\\n -n1 git config --unset 
+
+    - name: Snyk test
+      if: ${{ steps.golangver.outputs.HAS_GO_MOD == 'true' }}
+      continue-on-error: true # To make sure that SARIF upload gets called
+      env:
+        SNYK_TOKEN: ${{ inputs.SNYK_TOKEN }}
+        GOPRIVATE: ${{ inputs.GOPRIVATE }}
+      shell: bash
+      run: |
+          snyk test --sarif-file-output=snyk.sarif | tee >(
+                  # we only && if there is actually a match -- actual output.
+                  errout="$(grep 'Tested [0-9]\+ dependencies for known issues,\( found [1-9][0-9]* issues\|.* [1-9][0-9]* vulnerable paths\)')" &&
+                    echo "::error $errout"
+              )
+
+    # Requires "Advanced Security" for the repository (extra cost -- eCap has it enabled)
+    - name: Upload result to GitHub Code Scanning
+      if: ${{ steps.golangver.outputs.HAS_GO_MOD == 'true' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: snyk.sarif
+
+    # Because I can't pass the git-config to the docker image used by this action.
+    #- name: Snyk Code scan
+    #  uses: snyk/actions/golang@v1.0.0
+    #  env:
+    #    SNYK_TOKEN: ${{ inputs.SNYK_TOKEN }}
+    #    # https://go.dev/doc/faq#git_https
+    #    GOPRIVATE: ${{ inputs.GOPRIVATE }}
+
