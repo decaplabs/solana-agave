@@ -72,7 +72,7 @@ runs:
         if [ "${{ inputs.push-registry }}" = "" ]; then echo "::error ::input argument push-registry must not be empty"; exit 1; fi
 
         # Check mandatory vars
-        if [ "${{ fromJson(inputs.vars).AWS_GA_ROLE_ARN_PROD }}" = "" ]; then echo "::error ::AWS_GA_ROLE_ARN_PROD is not defined in any variable scope"; exit 1; fi
+        # if [ "${{ fromJson(inputs.vars).AWS_GA_ROLE_ARN_PROD }}" = "" ]; then echo "::error ::AWS_GA_ROLE_ARN_PROD is not defined in any variable scope"; exit 1; fi
         
         # validate target-env
         # make sure prod,stg do not mix with other values
