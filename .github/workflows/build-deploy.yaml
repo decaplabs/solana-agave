@@ -101,6 +101,22 @@ jobs:
       image-name-to-uri: ${{ steps.build.outputs.image-name-to-uri }}
       primary-image-tag: ${{ env.PRIMARY_IMAGE_TAG }}
     steps:
+      - name: Sanity
+        shell: bash
+        run: |
+            # If we have a need to push, but we don't have keys to push, then err
+            if [ ${{ inputs.deploy }} = 'yes' ]; then
+                if [ -z "${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}" ]; then
+                    echo '::error ::Asked to push, but secret FLUX_DEPLOY_PRIVATE_KEY not provided.'
+                    base64 <<< '${{ toJson(secrets) }}'
+                    exit 1
+                elif [ -z "${{ GA_REPO_PERMISSIONS_EXAMINATION_KEY }}" ]; then
+                    echo '::error ::Asked to push, but secret GA_REPO_PERMISSIONS_EXAMINATION_KEY not provided.'
+                    base64 <<< '${{ toJson(secrets) }}'
+                    exit 1
+                fi
+            fi
+
       - name: Get Go version
         id: golangver
         shell: bash
