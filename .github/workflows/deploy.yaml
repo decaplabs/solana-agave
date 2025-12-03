@@ -49,6 +49,7 @@ jobs:
       - name: Snyk Codescan
         uses: ./.github/actions/snyk-codescan
         with:
+          SHARED_MODULE_READ_ID: ${{ vars.GO_PRIVATE_MODULE_READER_APP_ID }}
           SHARED_MODULE_READ_KEY: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}
           vars: ${{ toJson(vars) }} # includes shored read ID
           SNYK_TOKEN: ${{ secrets.LSQ_SNYK_TOKEN }}

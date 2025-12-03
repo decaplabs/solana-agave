@@ -22,9 +22,19 @@ inputs:
     description: Look up usages of secrets.SHARED_MODULE_READ_KEY. This is the Github App token used to gain access to private Go module repositories.
     required: false
 
+  SHARED_MODULE_READ_ID:
+    description: the App ID of the github app that can read from the shared modules repository, corresponding to the key in the next input.
+    required: false
+
   SHARED_MODULE_READ_KEY:
     description: This should be the Github App token. If this is an SSH key, it can be passed to Dockerfile's to be able to read from private Github repos. This is an SSH key, and go-module-token should be preferred -- Dockerfiles should be rewritten. This only applies to lsqlabs/ projects.
     required: false
+
+  upload-codeql:
+    # Error: Resource not accessible by integration
+    description: "Whether to upload the CodeQL sarif file from this scan. This fails if \"advanced security\" is not enabled."
+    default: false
+    type: boolean
 
   vars:
     description: from the caller workflow, pass this to function toJson(vars). See README.
@@ -63,7 +73,7 @@ runs:
       uses: actions/create-github-app-token@v2
       with:
         # Github App ID that has access to private go module repos
-        app-id: ${{ fromJson(inputs.vars).SHARED_MODULE_READ_ID }}
+        app-id: ${{ inputs.SHARED_MODULE_READ_ID || fromJson(inputs.vars).SHARED_MODULE_READ_ID }}
         # The app token for this app
         private-key: ${{ inputs.SHARED_MODULE_READ_KEY }}
         permission-contents: read
@@ -71,12 +81,11 @@ runs:
 
     - name: Set up Snyk
       if: ${{ steps.golangver.outputs.HAS_GO_MOD == 'true' }}
-      uses: snyk/actions/setup@v1.0.0
-    - uses: actions/setup-go@v1
+      uses: snyk/actions/setup@master   # Docs say: @master
+    - uses: actions/setup-go@v6
       if: ${{ steps.golangver.outputs.HAS_GO_MOD == 'true' }}
       with:
-        go-version: ${{ steps.golangver.outputs.GOLANG_VER }}
-
+        go-version-file: go.mod
 
     - name: Configure Git environment
       if: ${{ steps.golangver.outputs.HAS_GO_MOD == 'true' }}
@@ -125,7 +134,7 @@ runs:
 
     # Requires "Advanced Security" for the repository (extra cost -- eCap has it enabled)
     - name: Upload result to GitHub Code Scanning
-      if: ${{ steps.golangver.outputs.HAS_GO_MOD == 'true' }}
+      if: ${{ steps.golangver.outputs.HAS_GO_MOD == 'true' && inputs.upload-codeql == 'true' }}
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: snyk.sarif
