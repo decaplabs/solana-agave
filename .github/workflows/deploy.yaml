@@ -154,3 +154,9 @@ jobs:
     secrets:
       GA_REPO_PERMISSIONS_EXAMINATION_KEY: ${{ secrets.GA_REPO_PERMISSIONS_EXAMINATION_KEY }}
       FLUX_DEPLOY_PRIVATE_KEY: ${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}
+      # TODO: It's building twice... but I'm not sure how to stop that.
+      # XXX This should be taken out when Dev is a viable environment. The idea is:
+      # build in dev, push, and in later environments pull the image and re-tag it.
+      # Only built once: in dev.
+      # XXX However, here, there is no dev... so build it for prod.
+      GO_PRIVATE_MODULE_READER_PRIVATE_KEY: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}
