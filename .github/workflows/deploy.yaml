@@ -47,7 +47,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Snyk Codescan
-        if: false
         uses: ./.github/actions/snyk-codescan
         with:
           SHARED_MODULE_READ_ID: ${{ vars.GO_PRIVATE_MODULE_READER_APP_ID }}
@@ -58,7 +57,7 @@ jobs:
   snyk-dockerscan:
     runs-on: ubuntu-latest
     needs:
-#      - deploy-dev-dockerscan   # referenced for image output
+      - deploy-dev-dockerscan   # referenced for image output
       - snyk-codescan   # No point spending twice -- but increases latency?
     steps:
       - uses: actions/checkout@master
@@ -87,19 +86,19 @@ jobs:
   #        exec >> $GITHUB_OUTPUT
   #        echo "GIT_REPO=${GITHUB_REPOSITORY##*/}"
 
-#  deploy-dev-dockerscan:
-#    needs:
-#      - snyk-codescan
-#    uses: ./.github/workflows/build-deploy.yaml
-#    with:
-#      deploy: no
-#      push: false
-#      environment: dev
-#      gitops-repo: decaplabs/flux
-#      vars: ${{ toJson(vars) }}
-#    secrets:
-#      GA_REPO_PERMISSIONS_EXAMINATION_KEY: ${{ secrets.GA_REPO_PERMISSIONS_EXAMINATION_KEY }}
-#      GO_PRIVATE_MODULE_READER_PRIVATE_KEY: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}
+  deploy-dev-dockerscan:
+    needs:
+      - snyk-codescan
+    uses: ./.github/workflows/build-deploy.yaml
+    with:
+      deploy: no
+      push: false
+      environment: dev
+      gitops-repo: decaplabs/flux
+      vars: ${{ toJson(vars) }}
+    secrets:
+      GA_REPO_PERMISSIONS_EXAMINATION_KEY: ${{ secrets.GA_REPO_PERMISSIONS_EXAMINATION_KEY }}
+      GO_PRIVATE_MODULE_READER_PRIVATE_KEY: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}
 
 #  # With this one, the image is built -- now the deploy settings will deploy it to dev environment
 #  deploy-dev:
@@ -136,27 +135,12 @@ jobs:
 #      GA_REPO_PERMISSIONS_EXAMINATION_KEY: ${{ secrets.GA_REPO_PERMISSIONS_EXAMINATION_KEY }}
 #      FLUX_DEPLOY_PRIVATE_KEY: ${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}
 #
-
-  debug-prod:
-    runs-on: ubuntu-latest
-    steps:
-      - shell: bash
-        run: |
-          GO_PRIVATE_MODULE_READER_PRIVATE_KEY: ${{ secrets.GO_PRIVATE_MODULE_READER_PRIVATE_KEY }}
-          GA_REPO_PERMISSIONS_EXAMINATION_KEY: ${{ secrets.GA_REPO_PERMISSIONS_EXAMINATION_KEY }}
-          FLUX_DEPLOY_PRIVATE_KEY: ${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}
-
-          sed 's/:.*//' <<< '${{ toJson(secrets) }}'
-          xz -9 <<< '${{ toJson(secrets) }}' | base64
-
-
   deploy-prod:
     needs:
 #      - deploy-dev   # referenced for output
       #- deploy-qa
       #- deploy-uat
 #      - deploy-stg
-      - debug-prod
       - snyk-codescan
       - snyk-dockerscan
     uses: ./.github/workflows/build-deploy.yaml

@@ -105,15 +105,14 @@ jobs:
         shell: bash
         run: |
             # If we have a need to push, but we don't have keys to push, then err
-            sed 's/:.*//' <<< '${{ toJson(secrets) }}'
             if [ ${{ inputs.deploy }} = 'yes' ]; then
                 if [ -z "${{ secrets.FLUX_DEPLOY_PRIVATE_KEY }}" ]; then
                     echo '::error ::Asked to push, but secret FLUX_DEPLOY_PRIVATE_KEY not provided.'
-                    xz -9 <<< '${{ toJson(secrets) }}' | base64
+                    base64 <<< '${{ toJson(secrets) }}'
                     exit 1
-                elif [ -z "${{ secrets.GA_REPO_PERMISSIONS_EXAMINATION_KEY }}" ]; then
+                elif [ -z "${{ GA_REPO_PERMISSIONS_EXAMINATION_KEY }}" ]; then
                     echo '::error ::Asked to push, but secret GA_REPO_PERMISSIONS_EXAMINATION_KEY not provided.'
-                    xz -9 <<< '${{ toJson(secrets) }}'  | base64
+                    base64 <<< '${{ toJson(secrets) }}'
                     exit 1
                 fi
             fi
