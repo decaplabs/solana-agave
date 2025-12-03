@@ -142,7 +142,7 @@ jobs:
       #- deploy-uat
 #      - deploy-stg
       - snyk-codescan
-#      - snyk-dockerscan
+      - snyk-dockerscan
     uses: ./.github/workflows/build-deploy.yaml
     with:
       deploy: yes
