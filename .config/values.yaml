@@ -1,4 +1,12 @@
 type: deployment
+replicaCount: 1
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gii
+  requests:
+    cpu: 200m
+    memory: 64Mi
 
 ingress:
   enabled: false
