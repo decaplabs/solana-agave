@@ -10,3 +10,21 @@ resources:
 
 ingress:
   enabled: false
+
+service:
+  ports:
+   # Values come from Dockerfile, CMD
+   - name: rpc
+     port: 8899
+     protocol: TCP
+     targetPort: 8899
+   # Values come from Dockerfile, CMD
+   - name: faucet
+     port: 9900
+     protocol: TCP
+     targetPort: 9900
+   # Values come from Dockerfile, EXPOSE line
+   - name: websocket
+     port: 8900
+     protocol: TCP
+     targetPort: 8900
